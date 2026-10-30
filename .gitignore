@@ -1,0 +1,15 @@
+.venv/
+.vendor/
+.env
+__pycache__/
+.cache/
+*.pyc
+node_modules/
+.next/
+.vercel/
+.tools/
+.env.*
+!.env.example
+*.tsbuildinfo
+.chroma-venv/
+.chroma/

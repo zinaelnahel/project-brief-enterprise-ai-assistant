@@ -1,0 +1,15 @@
+.env
+.env.*
+.vendor
+.venv
+.chroma-venv
+.chroma
+.tools
+.cache
+__pycache__
+documents
+*.ipynb
+*.py
+scripts
+tests
+project-intro.png

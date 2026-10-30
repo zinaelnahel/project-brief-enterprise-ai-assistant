@@ -1,0 +1,2 @@
+# Optional local Chroma server, kept separate from the Python lab environment.
+chromadb>=1.5,<2
