@@ -57,7 +57,7 @@ export async function POST(request: Request) {
     const hits: Hit[] = retrievalProvider() === 'chroma'
       ? await semanticSearch(chunks,query,options)
       : getLexicalIndex().search(query,options);
-    if (!hits.length) return reply({answer:UNKNOWN,hits:[]});
+    if (!hits.length) return reply({answer:'No close matches were found in the selected documents. Try rephrasing your question or broadening the scope.',hits:[]});
     if (body.mode === 'search') return reply({answer:'Here are the closest passages from the company documents. Check the sources below for details.',hits});
     stage = 'connection';
     const result = await fetch('https://api.openai.com/v1/responses', {
@@ -80,9 +80,10 @@ export async function POST(request: Request) {
     const response = await result.json();
     if (response.status !== 'completed') return reply({error:'The AI answer was incomplete. Please retry or use document search.'},502);
     const content = (response.output ?? []).flatMap((o: {content?: {type:string; text?:string}[]}) => o.content ?? []);
-    if (content.some((c: {type:string}) => c.type === 'refusal')) return reply({answer:UNKNOWN,hits});
+    if (content.some((c: {type:string}) => c.type === 'refusal')) return reply({answer:UNKNOWN,hits:[]});
     const text = content.filter((c: {type:string}) => c.type === 'output_text').map((c: {text:string}) => c.text).join('');
-    return reply({answer:validateAnswer(JSON.parse(text),hits),hits});
+    const answer = JSON.parse(text);
+    return reply({answer:validateAnswer(answer,hits),hits:answer.status === 'insufficient' ? [] : hits});
   } catch (error) {
     if (error instanceof RetrievalError) return reply({error:error.message},503);
     // Log categories only: never credentials, user text, or document evidence.

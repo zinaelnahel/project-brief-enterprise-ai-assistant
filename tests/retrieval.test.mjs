@@ -31,6 +31,12 @@ test('department filtering precedes top-k selection',()=>{
   assert.ok(hits.every(c=>c.department==='HR_policies'));
 });
 test('unknown terms have no evidence',()=>assert.deepEqual(index.search('zxqvzzzz'),[]));
+test('unknown query terms cannot be normalized away into catalog matches',()=>{
+  assert.deepEqual(index.search('zxqvzzzz blargh flibbertigibbet product'),[]);
+});
+test('Finance does not supply evidence for the remote work approval question',()=>{
+  assert.deepEqual(index.search('What is the remote work approval process?',{department:'Finance'}),[]);
+});
 test('follow-up retrieval carries prior user topic',()=>{
   assert.match(retrievalQuery('Who approves it?',[{role:'user',content:'remote work'}]),/remote work/);
   assert.equal(retrievalQuery('Expense policy',[{role:'user',content:'remote work'}]),'Expense policy');

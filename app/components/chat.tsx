@@ -24,6 +24,7 @@ export default function Chat({documentCount,departments,aiAvailable,semanticSear
   const [department,setDepartment]=useState('');
   const [historical,setHistorical]=useState(false);
   const [busy,setBusy]=useState(false);
+  const [slow,setSlow]=useState(false);
   const [error,setError]=useState('');
   const [sourceMessage,setSourceMessage]=useState<number|null>(null);
   const [activeSource,setActiveSource]=useState<string|null>(null);
@@ -48,9 +49,13 @@ export default function Chat({documentCount,departments,aiAvailable,semanticSear
   async function send(text:string) {
     if(busy || !text.trim())return;
     const prior=messages;
-    setBusy(true);setError('');setQuestion('');
+    setBusy(true);setSlow(false);setError('');setQuestion('');
     setMessages([...prior,{role:'user',content:text.trim()}]);
     controller.current=new AbortController();
+    const pending=controller.current;
+    let timedOut=false;
+    const slowTimer=setTimeout(()=>setSlow(true),8000);
+    const timeout=setTimeout(()=>{timedOut=true;pending.abort();},90000);
     try {
       const res=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},signal:controller.current.signal,
         body:JSON.stringify({question:text.trim(),mode,department:department||null,includeHistorical:historical,
@@ -60,10 +65,11 @@ export default function Chat({documentCount,departments,aiAvailable,semanticSear
       setMessages([...prior,{role:'user',content:text.trim()},{role:'assistant',content:data.answer,hits:data.hits,mode}]);
       setSourceMessage(prior.length+1);setActiveSource(data.hits?.[0]?.id ?? null);
     } catch(e) {
-      if(e instanceof Error && e.name==='AbortError')return;
       setMessages(prior);setQuestion(text);
-      setError(e instanceof Error?e.message:'Connection failed. Please try again.');
-    } finally {setBusy(false);controller.current=null;}
+      setError(pending.signal.aborted
+        ? timedOut?'The request took too long. Retry or switch to document search.':'Request cancelled. Your question is ready to send again.'
+        : e instanceof Error?e.message:'Connection failed. Please try again.');
+    } finally {clearTimeout(slowTimer);clearTimeout(timeout);setBusy(false);setSlow(false);controller.current=null;}
   }
   function submit(e:FormEvent){e.preventDefault();void send(question);}
   function clear(){if(busy)return;setMessages([]);setQuestion('');setError('');setSourceMessage(null);setActiveSource(null);setSourcesOpen(false);input.current?.focus();}
@@ -95,9 +101,9 @@ export default function Chat({documentCount,departments,aiAvailable,semanticSear
       </div>
       <div className="conversation-scroll">
         {!messages.length?<section className="empty-conversation"><p className="overline">INTERNAL RESEARCH</p><h2>Search company knowledge.</h2><p className="intro-description">Ask about policies, procedures, or products.<br/>Review the supporting documents alongside each response.</p><div className="suggestion-header"><h3>Suggested questions</h3><span>DEPARTMENT</span></div><div className="suggestion-list">{examples.map(([number,topic,q,area])=><button key={number} className="suggestion-row" onClick={()=>void send(q)} disabled={busy}><span className="row-number">{number}</span><span className="suggestion-topic">{topic}<small>{q}</small></span><span className="suggestion-area">{area}</span><Icon name="arrow"/></button>)}</div><p className="collection-note"><Icon name="document"/>{documentCount} source documents across {departments.length} knowledge areas</p></section>:
-        <section className="message-list" aria-label="Conversation" aria-live="polite">{messages.map((m,i)=><article className={`message ${m.role}`} key={i}><div className="message-meta"><span className={`author-mark ${m.role}`}>{m.role==='user'?'YOU':'IS'}</span><strong>{m.role==='assistant'?'IronStore assistant':'You'}</strong>{m.role==='assistant'&&<span className="response-mode">{m.mode==='ai'?'AI response':'Document search'}</span>}</div><div className="message-content">{content(m,i)}</div>{!!m.hits?.length&&<button className={`review-sources ${sourceMessage===i?'selected':''}`} onClick={()=>inspect(i)}><Icon name="document"/>Review {m.hits.length} supporting passages<Icon name="arrow"/></button>}</article>)}{busy&&<div className="request-status" role="status"><span className="loading-indicator"/>{mode==='ai'?'Reviewing documents and preparing a response...':'Searching the document library...'}</div>}<div ref={bottom}/></section>}
+        <section className="message-list" aria-label="Conversation" aria-live="polite">{messages.map((m,i)=><article className={`message ${m.role}`} key={i}><div className="message-meta"><span className={`author-mark ${m.role}`}>{m.role==='user'?'YOU':'IS'}</span><strong>{m.role==='assistant'?'IronStore assistant':'You'}</strong>{m.role==='assistant'&&<span className="response-mode">{m.mode==='ai'?'AI response':'Document search'}</span>}</div><div className="message-content">{content(m,i)}</div>{!!m.hits?.length&&<button className={`review-sources ${sourceMessage===i?'selected':''}`} onClick={()=>inspect(i)}><Icon name="document"/>Review {m.hits.length} supporting passages<Icon name="arrow"/></button>}</article>)}{busy&&<div className="request-status" role="status"><span className="loading-indicator"/>{slow?'This is taking longer than usual. You can cancel and try again.':mode==='ai'?'Reviewing documents and preparing a response...':'Searching the document library...'}<button className="text-button" onClick={()=>controller.current?.abort()}>Cancel</button></div>}<div ref={bottom}/></section>}
       </div>
-      <div className="composer-container">{error&&<div className="error" role="alert"><span>{error}</span><button onClick={()=>setError('')} aria-label="Dismiss error"><Icon name="close"/></button></div>}<form className="composer" onSubmit={submit}><label className="sr-only" htmlFor="question">Your question</label><textarea ref={input} id="question" value={question} onChange={e=>setQuestion(e.target.value)} placeholder="Ask about company policies, procedures, or products" maxLength={3000} rows={2} disabled={busy} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();void send(question);}}}/><div className="composer-footer"><span>{department?(labels[department]||department):'All departments'}<span className="keyboard-hint">Enter to send / Shift + Enter for a new line</span></span><button className="submit-question" type="submit" disabled={busy||!question.trim()} aria-label="Send question"><Icon name="arrow"/></button></div></form><p className="data-note">{mode==='ai'?'AI responses may contain errors. Verify important details against the sources. Questions and relevant excerpts are sent to OpenAI.':semanticSearchEnabled?'Semantic search sends your question to OpenAI for embedding and retrieves passages from Chroma.':'Document search retrieves source passages without sending them to an AI service.'}</p></div>
+      <div className="composer-container">{error&&<div className="error" role="alert"><span>{error}</span>{!!question.trim()&&<button className="text-button" onClick={()=>void send(question)} disabled={busy}>Retry</button>}<button onClick={()=>setError('')} aria-label="Dismiss error"><Icon name="close"/></button></div>}<form className="composer" onSubmit={submit}><label className="sr-only" htmlFor="question">Your question</label><textarea ref={input} id="question" value={question} onChange={e=>setQuestion(e.target.value)} placeholder="Ask about company policies, procedures, or products" maxLength={3000} rows={2} disabled={busy} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();void send(question);}}}/><div className="composer-footer"><span>{department?(labels[department]||department):'All departments'}<span className="keyboard-hint">Enter to send / Shift + Enter for a new line</span></span><button className="submit-question" type="submit" disabled={busy||!question.trim()} aria-label="Send question"><Icon name="arrow"/></button></div></form><p className="data-note">{mode==='ai'?'AI responses may contain errors. Verify important details against the sources. Questions and relevant excerpts are sent to OpenAI.':semanticSearchEnabled?'Semantic search sends your question to OpenAI for embedding and retrieves passages from Chroma.':'Document search retrieves source passages without sending them to an AI service.'}</p></div>
     </main>
     {sourcesOpen&&<button className="source-backdrop" onClick={()=>{setSourcesOpen(false);sourceToggle.current?.focus();}} aria-label="Close document sources"/>}
     <aside ref={sourcePanel} tabIndex={-1} id="source-panel" className={`source-panel ${sourcesOpen?'is-open':''}`} aria-label="Document sources">

@@ -56,3 +56,9 @@ test('semantic similarity threshold discards unrelated results',async()=>{
   const deps=dependencies();deps.env={CHROMA_MIN_SIMILARITY:'.95'};
   assert.deepEqual(await semanticSearch(chunks,'unrelated',{department:'HR_policies'},deps),[]);
 });
+test('default semantic threshold rejects weak nearest neighbors',async()=>{
+  const deps=dependencies();
+  const get=deps.client.getCollection;
+  deps.client.getCollection=async()=>({...await get(),query:async()=>({ids:[['a']],distances:[[.65]]})});
+  assert.deepEqual(await semanticSearch(chunks,'unrelated',{department:'HR_policies'},deps),[]);
+});

@@ -96,7 +96,7 @@ Add these settings to your existing `.env`, keeping your OpenAI key and chat mod
 RETRIEVAL_PROVIDER=chroma
 CHROMA_URL=http://127.0.0.1:8000
 CHROMA_COLLECTION=ironstore
-CHROMA_MIN_SIMILARITY=0.25
+CHROMA_MIN_SIMILARITY=0.4
 ```
 
 In another terminal:
@@ -110,7 +110,7 @@ Indexing sends the prepared document passages to OpenAI and incurs embedding usa
 
 Collection names include a hash of the corpus and embedding configuration. Changing documents creates a new collection instead of mixing old and new records. Old collections remain until you deliberately remove them. Searches reject incomplete collections and do not silently switch to TF-IDF.
 
-`CHROMA_MIN_SIMILARITY` is a cosine-similarity cutoff, not a confidence probability. Its default of `0.25` is a starting heuristic; tune it against realistic questions and unknown-answer examples.
+`CHROMA_MIN_SIMILARITY` is a cosine-similarity cutoff, not a confidence probability. Its default of `0.4` is a starting heuristic; tune it against realistic questions and unknown-answer examples.
 
 ### Chroma Cloud for Vercel
 
@@ -122,7 +122,7 @@ CHROMA_API_KEY=your-chroma-api-key
 CHROMA_TENANT=your-tenant
 CHROMA_DATABASE=your-database
 CHROMA_COLLECTION=ironstore
-CHROMA_MIN_SIMILARITY=0.25
+CHROMA_MIN_SIMILARITY=0.4
 ```
 
 Keep `OPENAI_API_KEY` and `OPENAI_MODEL` configured too. When `CHROMA_API_KEY` is set, the client uses Chroma Cloud and ignores `CHROMA_URL`. Run `npm run index:chroma` with those Cloud settings to populate the database before deploying. Use the same corpus and collection prefix for indexing and the deployed app. No Chroma Cloud database has been provisioned in this session.
