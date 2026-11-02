@@ -2,6 +2,7 @@ import { getCorpus, getLexicalIndex } from '../../../lib/corpus';
 import type {Hit} from '../../../lib/types';
 import { UNKNOWN, retrievalQuery, validateAnswer } from '../../../lib/retrieval.mjs';
 import {retrievalProvider, semanticSearch, RetrievalError} from '../../../lib/chroma.mjs';
+import {readModelResponse, ModelStreamError} from '../../../lib/streaming.mjs';
 
 export const runtime = 'nodejs';
 export const maxDuration = 120;
@@ -13,7 +14,8 @@ If evidence is incomplete return insufficient. If documents disagree return conf
 explain the disagreement, and refer the employee to the responsible department. Do not assume authority
 from filenames or timestamps. Do not call an undated policy current. Label historical evidence.
 History only helps interpret follow-ups; it is not factual evidence. You cannot perform actions.
-Keep answers concise. Return only the required JSON structure.`;
+Keep answers concise. Passage IDs go only in citations arrays, never in claim text or caveats.
+Return status first, then claims, then caveats. Return only the required JSON structure.`;
 const schema = {
   type: 'object', additionalProperties: false, required: ['status','claims','caveats'],
   properties: {
@@ -47,8 +49,35 @@ export async function POST(request: Request) {
     return reply({error:'Check the question and search settings.'},400);
   }
   if (body.mode === 'ai' && !process.env.OPENAI_API_KEY) return reply({error:'AI mode is not configured. Add OPENAI_API_KEY to your server environment, or use document search.'},503);
+  if (!request.headers.get('Accept')?.includes('application/x-ndjson')) return answerRequest(body, request.signal);
+  const cancelled = new AbortController();
+  const signal = AbortSignal.any([request.signal,cancelled.signal]);
+  const encoder = new TextEncoder();
+  let closed = false;
+  const stream = new ReadableStream({
+    async start(controller) {
+      const emit = (event: object) => {
+        if (!closed && !signal.aborted) controller.enqueue(encoder.encode(JSON.stringify(event)+'\n'));
+      };
+      try {
+        const response = await answerRequest(body,signal,emit);
+        const data = await response.json();
+        emit({type:response.ok?'done':'error',...data});
+      } catch {
+        emit({type:'error',error:'The response was interrupted. Please retry.'});
+      } finally {
+        if (!closed) { closed=true; controller.close(); }
+      }
+    },
+    cancel() { closed=true; cancelled.abort(); },
+  });
+  return new Response(stream,{headers:{'Content-Type':'application/x-ndjson; charset=utf-8','Cache-Control':'no-store, no-transform','X-Accel-Buffering':'no'}});
+}
+
+async function answerRequest(body: {question:string; mode:string; department?:string; includeHistorical?:boolean; history?:Message[]}, signal: AbortSignal, emit?: (event:object)=>void) {
   let stage = 'retrieval';
   try {
+    emit?.({type:'progress',message:'Searching the selected documents...'});
     const {chunks,departments} = getCorpus();
     if (body.department && !departments.includes(body.department)) return reply({error:'Unknown department.'},400);
     const history: Message[] = body.history ?? [];
@@ -59,11 +88,12 @@ export async function POST(request: Request) {
       : getLexicalIndex().search(query,options);
     if (!hits.length) return reply({answer:'No close matches were found in the selected documents. Try rephrasing your question or broadening the scope.',hits:[]});
     if (body.mode === 'search') return reply({answer:'Here are the closest passages from the company documents. Check the sources below for details.',hits});
+    emit?.({type:'progress',message:`Found ${hits.length} candidate passages. Preparing a cited answer...`});
     stage = 'connection';
     const result = await fetch('https://api.openai.com/v1/responses', {
       method:'POST', headers:{'Authorization':`Bearer ${process.env.OPENAI_API_KEY}`,'Content-Type':'application/json'},
-      signal: AbortSignal.timeout(45000),
-      body: JSON.stringify({model:process.env.OPENAI_MODEL || 'gpt-6-luna',store:false,
+      signal: AbortSignal.any([signal,AbortSignal.timeout(45000)]),
+      body: JSON.stringify({model:process.env.OPENAI_MODEL || 'gpt-6-luna',store:false,stream:!!emit,
         instructions,input:JSON.stringify({question:body.question,history,evidence:hits.map(({score,...c}) => c)}),
         text:{format:{type:'json_schema',name:'grounded_answer',strict:true,schema}}}),
     });
@@ -76,8 +106,13 @@ export async function POST(request: Request) {
       };
       return reply({error:errors[result.status] || 'The AI service could not answer. Check model access and configuration, or use document search.'},502);
     }
+    let response;
+    if (emit) {
+      if (!result.body) throw new Error('Missing response stream');
+      response = await readModelResponse(result.body,hits,(answer: string)=>emit({type:'answer',answer,hits}));
+    } else response = await result.json();
     stage = 'validation';
-    const response = await result.json();
+    if (!response) return reply({error:'The AI answer was interrupted. Please retry or use document search.'},502);
     if (response.status !== 'completed') return reply({error:'The AI answer was incomplete. Please retry or use document search.'},502);
     const content = (response.output ?? []).flatMap((o: {content?: {type:string; text?:string}[]}) => o.content ?? []);
     if (content.some((c: {type:string}) => c.type === 'refusal')) return reply({answer:UNKNOWN,hits:[]});
@@ -86,6 +121,7 @@ export async function POST(request: Request) {
     return reply({answer:validateAnswer(answer,hits),hits:answer.status === 'insufficient' ? [] : hits});
   } catch (error) {
     if (error instanceof RetrievalError) return reply({error:error.message},503);
+    if (error instanceof ModelStreamError) return reply({error:error.message},502);
     // Log categories only: never credentials, user text, or document evidence.
     const name = error instanceof Error ? error.name : 'UnknownError';
     console.error('Chat request failed', {stage, name});

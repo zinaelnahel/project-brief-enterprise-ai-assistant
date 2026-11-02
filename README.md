@@ -199,6 +199,8 @@ The production TF-IDF/cosine search is selected with `RETRIEVAL_PROVIDER=tfidf`.
 
 **Validation:** the model must return a structured answer. The server rejects factual claims with missing citation IDs or IDs outside the retrieved evidence. This checks that the cited passages exist; it does not prove every claim is supported, so important details still need review.
 
+**Streaming and source review:** the interface requests an NDJSON stream with retrieval progress, followed by complete claims as they are generated. Each claim's citations are checked before display; the final answer is validated again. Responses remain marked in progress until completion. Interrupted or invalid responses are removed and the question is restored for retry. The source pane starts at the first cited passage rather than the highest retrieval score. Raw passage IDs are stripped from generated prose; citation controls are built from validated IDs. Clients without the streaming Accept header still receive JSON. The upstream protocol follows [OpenAI's streaming documentation](https://developers.openai.com/api/docs/guides/streaming-responses).
+
 If no passages pass the search threshold, the assistant says it cannot find enough reliable information. That threshold is a search heuristic, not a confidence percentage.
 
 ## 6. Old, duplicated, and conflicting documents
@@ -221,6 +223,7 @@ This does not guarantee that every conflict will be found: the model only sees t
 | `app/api/chat/route.ts` | Server endpoint for search, OpenAI requests, validation, and errors. |
 | `lib/corpus.ts` | Loads and caches the server-only document library. |
 | `lib/retrieval.mjs` | TF-IDF search, follow-up context, and citation checks. |
+| `lib/streaming.mjs` | Incremental response decoding and citation-checked claim streaming. |
 | `lib/chroma.mjs` | OpenAI embeddings, Chroma connection, collection identity, and semantic retrieval. |
 | `scripts/index-chroma.mjs` | Resumable document embedding and Chroma indexing. |
 | `scripts/evaluate-chroma.mjs` | Live paraphrase-retrieval checks (uses embedding API calls). |
@@ -231,6 +234,7 @@ This does not guarantee that every conflict will be found: the model only sees t
 | `scripts/pdf_documents.py` | Single Python PDF ingestion implementation. |
 | `lib/types.ts` | Shared source and passage types for server and frontend. |
 | `tests/retrieval.test.mjs` | Tests for the Next.js app's retrieval logic. |
+| `tests/streaming.test.mjs` | Stream fragmentation, early claims, interrupted responses, source selection, and citation formatting. |
 | `next.config.mjs` | Includes the document data in the server function bundle. |
 | `vercel.json` / `.vercelignore` | Vercel build settings and upload exclusions. |
 | `.env.example` | Example server environment variables. |
@@ -271,7 +275,7 @@ npm run typecheck
 npm run build
 ```
 
-The 15 JavaScript tests passed. They cover embedding request formatting, filter preservation, corpus-version checks, incomplete-index rejection, similarity filtering, safe error messages, and the exported document counts and IDs, representative policy questions, historical exclusion, department filtering, unknown questions, follow-up context, and rejection of missing or fabricated citations.
+The 27 JavaScript tests passed. They cover embedding request formatting, filter preservation, corpus-version checks, incomplete-index rejection, similarity filtering, safe error messages, exported document counts and IDs, representative policy questions, historical exclusion, department filtering, unrelated queries across scopes, follow-up context, and rejection of missing or fabricated citations. Streaming tests also cover fragmented UTF-8 and SSE, early claim delivery, cancellation, interrupted responses, citation artifact removal, and selection of the first cited passage.
 
 We also verified the running homepage and API: document search returns page references, unknown questions produce an acknowledgment of missing information, and invalid requests are rejected. The server function's file trace includes the corpus for deployment. With Chroma enabled, all six live paraphrase checks retrieved the expected policy in the top six results, and both document-search and AI endpoints returned successful responses with HR filtering preserved.
 

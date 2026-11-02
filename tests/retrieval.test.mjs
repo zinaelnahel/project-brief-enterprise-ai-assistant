@@ -35,7 +35,19 @@ test('unknown query terms cannot be normalized away into catalog matches',()=>{
   assert.deepEqual(index.search('zxqvzzzz blargh flibbertigibbet product'),[]);
 });
 test('Finance does not supply evidence for the remote work approval question',()=>{
-  assert.deepEqual(index.search('What is the remote work approval process?',{department:'Finance'}),[]);
+  for(const includeHistorical of [false,true]) {
+    assert.deepEqual(index.search('What is the remote work approval process?',{department:'Finance',includeHistorical}),[]);
+  }
+});
+
+test('unrelated queries remain empty across departments and historical settings',()=>{
+  for(const department of [null,...new Set(corpus.chunks.map(c=>c.department))]) {
+    for(const includeHistorical of [false,true]) {
+      for(const question of ['zxqvzzzz','zxqvzzzz blargh flibbertigibbet product']) {
+        assert.deepEqual(index.search(question,{department,includeHistorical}),[],`${department}: ${question}`);
+      }
+    }
+  }
 });
 test('follow-up retrieval carries prior user topic',()=>{
   assert.match(retrievalQuery('Who approves it?',[{role:'user',content:'remote work'}]),/remote work/);
