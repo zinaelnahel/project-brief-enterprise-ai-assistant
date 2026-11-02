@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import type {Hit} from '../../lib/types';
-import {preferredSource} from '../../lib/retrieval.mjs';
+import {selectedSource} from '../../lib/retrieval.mjs';
 import {streamLines} from '../../lib/streaming.mjs';
 
 type Message = {role:'user'|'assistant'; content:string; hits?:Hit[]; mode?:string; pending?:boolean};
@@ -38,7 +38,7 @@ export default function Chat({documentCount,departments,aiAvailable,semanticSear
   const sourcePanel=useRef<HTMLElement>(null);
   const controller=useRef<AbortController|null>(null);
   const hits=sourceMessage===null?[]:messages[sourceMessage]?.hits || [];
-  const selected=hits.find(h=>h.id===activeSource) || hits[0];
+  const selected=selectedSource(sourceMessage===null?'':messages[sourceMessage]?.content || '',hits,activeSource);
   useEffect(()=>{bottom.current?.scrollIntoView({behavior:'smooth',block:'end'});},[messages,busy]);
   useEffect(()=>()=>controller.current?.abort(),[]);
   useEffect(()=>{
@@ -76,14 +76,14 @@ export default function Chat({documentCount,departments,aiAvailable,semanticSear
         const event=JSON.parse(line);
         if(event.type==='error')throw new Error(event.error || 'The request failed. Please retry.');
         if(event.type==='progress')setProgress(event.message);
-        if(event.type==='answer' || event.type==='done') {
+        if(['sources','answer','done'].includes(event.type)) {
           setMessages([...prior,{role:'user',content:text.trim()},{role:'assistant',content:event.answer,hits:event.hits,mode,pending:event.type!=='done'}]);
           if(!received || !event.hits?.length) {
             setSourceMessage(prior.length+1);
-            setActiveSource(preferredSource(event.answer,event.hits || []));
+            setActiveSource(null);
           }
           received=true;
-          setProgress('Writing the answer and checking citations...');
+          if(event.type!=='sources')setProgress('Writing the answer and checking citations...');
           if(event.type==='done'){finished=true;break;}
         }
       }
@@ -98,7 +98,7 @@ export default function Chat({documentCount,departments,aiAvailable,semanticSear
   }
   function submit(e:FormEvent){e.preventDefault();void send(question);}
   function clear(){if(busy)return;setMessages([]);setQuestion('');setError('');setSourceMessage(null);setActiveSource(null);setSourcesOpen(false);input.current?.focus();}
-  function inspect(index:number,id?:string){setSourceMessage(index);setActiveSource(id || preferredSource(messages[index].content,messages[index].hits || []));setSourcesOpen(true);}
+  function inspect(index:number,id?:string){setSourceMessage(index);setActiveSource(id || null);setSourcesOpen(true);}
   function content(message:Message,index:number) {
     return message.content.split(/(\[[a-f0-9]{12}\])/g).map((part,i)=>{
       const id=part.slice(1,-1); const hit=message.hits?.find(h=>h.id===id);
@@ -126,7 +126,7 @@ export default function Chat({documentCount,departments,aiAvailable,semanticSear
       </div>
       <div className="conversation-scroll">
         {!messages.length?<section className="empty-conversation"><p className="overline">INTERNAL RESEARCH</p><h2>Search company knowledge.</h2><p className="intro-description">Ask about policies, procedures, or products.<br/>Review the supporting documents alongside each response.</p><div className="suggestion-header"><h3>Suggested questions</h3><span>DEPARTMENT</span></div><div className="suggestion-list">{examples.map(([number,topic,q,area])=><button key={number} className="suggestion-row" onClick={()=>void send(q)} disabled={busy}><span className="row-number">{number}</span><span className="suggestion-topic">{topic}<small>{q}</small></span><span className="suggestion-area">{area}</span><Icon name="arrow"/></button>)}</div><p className="collection-note"><Icon name="document"/>{documentCount} source documents across {departments.length} knowledge areas</p></section>:
-        <section className="message-list" aria-label="Conversation" aria-live="polite">{messages.map((m,i)=><article className={`message ${m.role}`} key={i}><div className="message-meta"><span className={`author-mark ${m.role}`}>{m.role==='user'?'YOU':'IS'}</span><strong>{m.role==='assistant'?'IronStore assistant':'You'}</strong>{m.role==='assistant'&&<span className="response-mode">{m.pending?'Answer in progress':m.mode==='ai'?'AI response':'Document search'}</span>}</div><div className="message-content">{content(m,i)}</div>{!!m.hits?.length&&<button className={`review-sources ${sourceMessage===i?'selected':''}`} onClick={()=>inspect(i)}><Icon name="document"/>Review {m.hits.length} supporting passages<Icon name="arrow"/></button>}</article>)}{busy&&<div className="request-status" role="status"><span className="loading-indicator"/>{progress}{slow&&' This is taking longer than usual. You can cancel and try again.'}<button className="text-button" onClick={()=>controller.current?.abort()}>Cancel</button></div>}<div ref={bottom}/></section>}
+        <section className="message-list" aria-label="Conversation" aria-live="polite">{messages.map((m,i)=><article className={`message ${m.role}`} key={i}><div className="message-meta"><span className={`author-mark ${m.role}`}>{m.role==='user'?'YOU':'IS'}</span><strong>{m.role==='assistant'?'IronStore assistant':'You'}</strong>{m.role==='assistant'&&<span className="response-mode">{m.pending?'Answer in progress':m.mode==='ai'?'AI response':'Document search'}</span>}</div><div className="message-content">{content(m,i)}</div>{!!m.hits?.length&&<button className={`review-sources ${sourceMessage===i?'selected':''}`} onClick={()=>inspect(i)}><Icon name="document"/>Review {m.hits.length} {m.pending?'matching':'supporting'} passages<Icon name="arrow"/></button>}</article>)}{busy&&<div className="request-status" role="status"><span className="loading-indicator"/>{progress}{slow&&' This is taking longer than usual. You can cancel and try again.'}<button className="text-button" onClick={()=>controller.current?.abort()}>Cancel</button></div>}<div ref={bottom}/></section>}
       </div>
       <div className="composer-container">{error&&<div className="error" role="alert"><span>{error}</span>{!!question.trim()&&<button className="text-button" onClick={()=>void send(question)} disabled={busy}>Retry</button>}<button onClick={()=>setError('')} aria-label="Dismiss error"><Icon name="close"/></button></div>}<form className="composer" onSubmit={submit}><label className="sr-only" htmlFor="question">Your question</label><textarea ref={input} id="question" value={question} onChange={e=>setQuestion(e.target.value)} placeholder="Ask about company policies, procedures, or products" maxLength={3000} rows={2} disabled={busy} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();void send(question);}}}/><div className="composer-footer"><span>{department?(labels[department]||department):'All departments'}<span className="keyboard-hint">Enter to send / Shift + Enter for a new line</span></span><button className="submit-question" type="submit" disabled={busy||!question.trim()} aria-label="Send question"><Icon name="arrow"/></button></div></form><p className="data-note">{mode==='ai'?'AI responses may contain errors. Verify important details against the sources. Questions and relevant excerpts are sent to OpenAI.':semanticSearchEnabled?'Semantic search sends your question to OpenAI for embedding and retrieves passages from Chroma.':'Document search retrieves source passages without sending them to an AI service.'}</p></div>
     </main>

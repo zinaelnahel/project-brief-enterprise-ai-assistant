@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {Index, UNKNOWN, retrievalQuery, validateAnswer} from '../lib/retrieval.mjs';
+import {Index, UNKNOWN, retrievalQuery, validateAnswer, isRevisionPassage} from '../lib/retrieval.mjs';
 
 const corpus = JSON.parse(readFileSync(new URL('../data/corpus.json',import.meta.url),'utf8'));
 const index = new Index(corpus.chunks);
@@ -19,6 +19,26 @@ test('finds the expected policy for representative employee questions',()=>{
     ['How should I handle a customer refund request?','Refund_and_Complaint'],
     ['What are the shipping delivery SLAs?','Shipping_and_Delivery'],
   ]) assert.ok(index.search(question).some(c=>c.source.includes(expected)),question);
+});
+
+test('password question retrieves identical substantive evidence in all departments and IT',()=>{
+  const question='What are the password and access requirements?';
+  for(const includeHistorical of [false,true]) {
+    const all=index.search(question,{includeHistorical});
+    const scoped=index.search(question,{department:'IT',includeHistorical});
+    assert.equal(all.length,6);
+    assert.deepEqual(all,scoped);
+    assert.ok(!isRevisionPassage(all[0]));
+    assert.ok(all.some(hit=>hit.page===2 && hit.source.includes('Password_and_Access')));
+    assert.ok(all.some(hit=>hit.page===3 && hit.source.includes('Password_and_Access')));
+    for(let i=0;i<3;i++)assert.deepEqual(index.search(question,{includeHistorical}),all);
+  }
+});
+
+test('revision snippets are deprioritized for requirements but remain searchable',()=>{
+  assert.ok(isRevisionPassage({text:'2023 — Version 3.0: Consolidated password standards.'}));
+  assert.ok(!isRevisionPassage({text:'Passwords require at least 14 characters.'}));
+  assert.ok(index.search('password version history',{includeHistorical:true}).length);
 });
 test('historical documents are opt-in',()=>{
   assert.ok(corpus.chunks.some(c=>c.historical));

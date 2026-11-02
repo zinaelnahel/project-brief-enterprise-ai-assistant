@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {completedClaims, serverEvents, streamLines, readModelResponse} from '../lib/streaming.mjs';
-import {validateAnswer, preferredSource, UNKNOWN} from '../lib/retrieval.mjs';
+import {validateAnswer, preferredSource, selectedSource, UNKNOWN} from '../lib/retrieval.mjs';
 
 const hits=[{id:'111111111111',text:'Revision history',page:6},{id:'88f4391e22c7',text:'Use MFA.',page:2}];
 const claim={text:'Use MFA. 88f4391e22c7 [111111111111]',citations:['88f4391e22c7']};
@@ -40,10 +40,23 @@ test('streamed and final claims remove raw IDs and keep canonical citations',()=
   const formatted=validateAnswer({...answer,caveats:['Check with IT. [88f4391e22c7]']},hits);
   assert.equal(formatted,'Use MFA. [88f4391e22c7]\n\nCheck with IT.');
   assert.equal(preferredSource(formatted,hits),'88f4391e22c7');
-  assert.equal(preferredSource('No citations',hits),'111111111111');
+  assert.equal(preferredSource('No citations',hits),'88f4391e22c7');
   assert.equal(preferredSource(UNKNOWN,[]),null);
   assert.throws(()=>validateAnswer({...answer,claims:[{text:'88f4391e22c7',citations:['88f4391e22c7']}]},hits));
   assert.throws(()=>validateAnswer({...answer,claims:[{text:'Use MFA.',citations:['fake']}]},hits));
+});
+
+test('automatic source follows final citations while an explicit selection persists',()=>{
+  const provisional='Policy changed in 2023. [111111111111]';
+  const final='Use MFA. [88f4391e22c7]';
+  assert.equal(selectedSource(provisional,hits,null).page,6);
+  assert.equal(selectedSource(final,hits,null).page,2);
+  assert.equal(selectedSource(final,hits,'111111111111').page,6);
+  assert.equal(selectedSource(final,[],null),undefined);
+});
+
+test('first claim prefers a substantive cited passage over revision history',()=>{
+  assert.equal(preferredSource('Use MFA. [111111111111] [88f4391e22c7]',hits),'88f4391e22c7');
 });
 
 test('closing a consumer cancels upstream reads',async()=>{
